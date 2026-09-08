@@ -2,6 +2,8 @@
 #include <vector>
 #include <utility>
 
+namespace csr {
+
 struct Csr {
     std::vector<int> row_ptr;   // size n+1
     std::vector<int> col_idx;   // size nnz
@@ -32,3 +34,5 @@ inline Csr build(int n, const std::vector<std::pair<int, int>>& edges) {
     }
     return m;
 }
+
+}   // namespace csr
