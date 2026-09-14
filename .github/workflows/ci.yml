@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege: this workflow only ever reads the repository.
+permissions:
+  contents: read
+
+# A new push to the same branch cancels the run it superseded.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Git Bash on the Windows runner, so quoting, paths and heredocs behave the
+# same on all three platforms and no step below needs a per-OS variant.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      # Do not cancel the other toolchains when one fails: knowing whether a
+      # failure is one compiler or all of them is most of the diagnosis.
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux / GCC
+            os: ubuntu-latest
+            cxx: g++
+            warnings: -Wall -Wextra -Wpedantic -Werror
+          - name: Linux / Clang
+            os: ubuntu-latest
+            cxx: clang++
+            warnings: -Wall -Wextra -Wpedantic -Werror
+          - name: macOS / AppleClang
+            os: macos-latest
+            cxx: clang++
+            warnings: -Wall -Wextra -Wpedantic -Werror
+          - name: Windows / MSVC
+            os: windows-latest
+            cxx: ''         # empty: let CMake pick the Visual Studio toolchain
+            warnings: /W4   # deliberately no /WX yet -- see the README of this file
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure
+        env:
+          CXX: ${{ matrix.cxx }}
+          # CXXFLAGS, not -DCMAKE_CXX_FLAGS. The environment variable is
+          # *combined* with the platform's own initial flags; -D replaces them
+          # outright, which on MSVC silently drops /EHsc and breaks every
+          # REQUIRE in the suite.
+          CXXFLAGS: ${{ matrix.warnings }}
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCSR_BUILD_TESTS=ON
+
+      # --config Debug is there for Windows: the Visual Studio generator is
+      # multi-config, so it ignores CMAKE_BUILD_TYPE and picks the
+      # configuration at build time instead. Single-config generators ignore
+      # the flag, so one command covers all three platforms.
+      - name: Build
+        run: cmake --build build --config Debug --parallel
+
+      - name: Test
+        run: ctest --test-dir build --build-config Debug --output-on-failure
+
+  install:
+    name: Install and consume
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Header-only, so there is nothing to compile before installing.
+      - name: Install to a staging prefix
+        run: |
+          cmake -S . -B build -DCSR_INSTALL=ON -DCSR_BUILD_TESTS=OFF -DCSR_BUILD_EXAMPLES=OFF
+          cmake --install build --prefix "$PWD/prefix"
+
+      # The export/config package is the part of this repo most likely to
+      # break without anyone noticing: nothing in the test suite touches it,
+      # and a consumer only finds out at find_package() time. v0.1.0 already
+      # points at a commit that cannot be configured at all -- this job is
+      # what stops that happening twice.
+      - name: Consume it with find_package
+        run: |
+          mkdir -p consumer
+          cat > consumer/CMakeLists.txt <<'EOF'
+          cmake_minimum_required(VERSION 3.23)
+          project(consumer LANGUAGES CXX)
+          find_package(csr 0.1 REQUIRED)
+          add_executable(app main.cpp)
+          target_link_libraries(app PRIVATE csr::csr)
+          EOF
+          cat > consumer/main.cpp <<'EOF'
+          #include <csr/csr.hpp>
+          int main() { return csr::build(2, {{0, 1}}).col_idx.size() == 2 ? 0 : 1; }
+          EOF
+          cmake -S consumer -B consumer/build -DCMAKE_PREFIX_PATH="$PWD/prefix"
+          cmake --build consumer/build
+          ./consumer/build/app
+
+      # Nothing of doctest's may leak into a consumer's prefix.
+      - name: Check the install tree contains only csr
+        run: |
+          find prefix -type f | sort
+          ! find prefix -type f | grep -qi doctest
