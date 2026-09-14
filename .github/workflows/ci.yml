@@ -16,12 +16,14 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Git Bash on the Windows runner, so quoting, paths and heredocs behave the
-# same on all three platforms and no step below needs a per-OS variant.
-defaults:
-  run:
-    shell: bash
-
+# NOTE: deliberately no `defaults: run: shell: bash` here.
+#
+# Forcing Git Bash onto the Windows runner looks tidy, but Git Bash is MSYS,
+# and MSYS rewrites anything shaped like an absolute POSIX path when it hands
+# environment variables to a native Windows program. CXXFLAGS=/W4 reaches
+# cmake.exe as C:/Program Files/Git/W4 -- the MSYS root with W4 glued on --
+# and cl.exe then tries to compile a source file by that name. Windows steps
+# below therefore run in PowerShell, which passes /W4 through untouched.
 jobs:
   test:
     name: ${{ matrix.name }}
@@ -48,7 +50,13 @@ jobs:
           - name: Windows / MSVC
             os: windows-latest
             cxx: ''         # empty: let CMake pick the Visual Studio toolchain
-            warnings: /W4   # deliberately no /WX yet -- see the README of this file
+            # No /WX yet: /W4 has never been pointed at this code, so let the
+            # first run report before making warnings fatal.
+            #
+            # cl.exe accepts -W4 as well as /W4. If a step on Windows ever has
+            # to run under bash, use the dash form -- it does not look like a
+            # POSIX path, so MSYS leaves it alone.
+            warnings: /W4
 
     steps:
       - uses: actions/checkout@v7
