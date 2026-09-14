@@ -27,8 +27,9 @@ target_sources(csr
 
 # ---- Options ----
 
-# Both default to OFF when csr is consumed via add_subdirectory or FetchContent.
+# All default to OFF when csr is consumed via add_subdirectory or FetchContent.
 option(CSR_BUILD_EXAMPLES "Build the csr examples"                ${PROJECT_IS_TOP_LEVEL})
+option(CSR_BUILD_TESTS    "Build the csr tests"                   ${PROJECT_IS_TOP_LEVEL})
 option(CSR_INSTALL        "Generate csr install and export rules" ${PROJECT_IS_TOP_LEVEL})
 
 # ---- Examples ----
@@ -36,6 +37,19 @@ option(CSR_INSTALL        "Generate csr install and export rules" ${PROJECT_IS_T
 if(CSR_BUILD_EXAMPLES)
     add_executable(csr_example examples/main.cpp)
     target_link_libraries(csr_example PRIVATE csr::csr)
+endif()
+
+# ---- Tests ----
+
+if(CSR_BUILD_TESTS)
+    # enable_testing() has to be called from the top-level CMakeLists.txt.
+    # Called from tests/ instead, `ctest` run at the build root finds nothing.
+    #
+    # Deliberately not include(CTest): that defines its own BUILD_TESTING
+    # option, defaulting to ON, which would then fight CSR_BUILD_TESTS, and it
+    # drags in CDash dashboard machinery this project has no use for.
+    enable_testing()
+    add_subdirectory(tests)
 endif()
 
 # ---- Install ----
